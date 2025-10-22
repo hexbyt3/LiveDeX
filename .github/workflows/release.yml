@@ -2,7 +2,7 @@ name: Build and Release
 on:
   push:
     paths:
-      - "PKHeX.Plugin.LivingDex/Deps/PKHeX.Core.dll"
+      - "Deps/PKHeX.Core.dll"
   workflow_dispatch:
 permissions:
   contents: write
