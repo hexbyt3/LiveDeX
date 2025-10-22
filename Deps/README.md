@@ -1,4 +1,4 @@
-# Dependencies
+# 📦 Dependencies
 
 This folder contains the PKHeX.Core.dll dependency required to build the Living Dex Builder plugin.
 
