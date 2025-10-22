@@ -102,6 +102,10 @@ public partial class SAV_LivingDexBuilder : Form
                 if (form > 0 && !SAV.Personal.IsPresentInGame(species, form))
                     continue;
 
+                // Skip forms for Scatterbug (664) and Spewpa (665) - only Vivillon (666) has meaningful forms
+                if (form > 0 && (species == 664 || species == 665))
+                    continue;
+
                 // Get the PersonalInfo for this specific form
                 var formPi = SAV.Personal[species, form];
                 AnalyzeGenderVariants(species, form, formPi, existingSpecies);
