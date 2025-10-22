@@ -1,0 +1,37 @@
+name: Build and Release
+on:
+  push:
+    paths:
+      - "PKHeX.Plugin.LivingDex/Deps/PKHeX.Core.dll"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '9.0.x'
+      - name: Restore dependencies
+        run: dotnet restore PKHeX.Plugin.LivingDex.sln
+      - name: Build
+        run: dotnet build PKHeX.Plugin.LivingDex.sln -c Release --no-restore
+      - name: Extract version from PKHeX.Core.dll
+        id: ver
+        shell: pwsh
+        run: |
+          $dll = "Deps/PKHeX.Core.dll"
+          $version = [System.Reflection.Assembly]::LoadFrom((Resolve-Path $dll)).GetName().Version
+          $versionString = "$($version.Major).$($version.Minor).$($version.Build)"
+          echo "version=$versionString" >> $env:GITHUB_OUTPUT
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: "v${{ steps.ver.outputs.version }}"
+          name: "Living Dex Builder ${{ steps.ver.outputs.version }}"
+          body: "Automated release for version ${{ steps.ver.outputs.version }}"
+          files: |
+            PKHeX.Plugin.LivingDex/bin/Release/net9.0-windows/PKHeX.Plugin.LivingDex.dll
