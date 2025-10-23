@@ -13,6 +13,9 @@ This plugin analyzes your save file and automatically generates any missing Pok�
 - Flexible options for shiny, gender variants, forms, and more
 - Imports generated Pokémon directly into your boxes
 
+## Screenshot
+![Screenshot 2025-10-22 170902](https://github.com/user-attachments/assets/02f136a3-df9f-46de-a1a5-cc9fee13ef03)
+
 ## 🚀 Installation
 
 1. Download the latest `PKHeX.Plugin.LivingDex.dll` from the [Releases](../../releases) page
