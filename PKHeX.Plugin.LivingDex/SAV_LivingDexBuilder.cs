@@ -331,9 +331,9 @@ public partial class SAV_LivingDexBuilder : Form
         pk.Ball = (byte)Ball.Poke;
         pk.CurrentFriendship = pi.BaseFriendship;
         
-        var language = (int)Language.GetSafeLanguage(SAV.Generation, (LanguageID)SAV.Language);
-        pk.Language = language;
-        pk.Nickname = SpeciesName.GetSpeciesNameGeneration(entry.Species, language, SAV.Generation);
+        var languageID = GetSafeLanguageForGeneration(SAV.Generation, (LanguageID)SAV.Language);
+        pk.Language = (int)languageID;
+        pk.Nickname = SpeciesName.GetSpeciesNameGeneration(entry.Species, (int)languageID, SAV.Generation);
     }
 
     /// <summary>
@@ -1015,6 +1015,19 @@ public partial class SAV_LivingDexBuilder : Form
         DialogResult = DialogResult.Cancel;
         Close();
     }
+
+    /// <summary>
+    /// Gets a safe language for the given generation.
+    /// </summary>
+    private static LanguageID GetSafeLanguageForGeneration(byte generation, LanguageID prefer) => generation switch
+    {
+        1 => Language.GetSafeLanguage1(prefer, GameVersion.RBY),
+        2 => Language.GetSafeLanguage2(prefer),
+        3 => Language.GetSafeLanguage3(prefer),
+        >= 4 and <= 6 => Language.GetSafeLanguage456(prefer),
+        >= 7 and <= 9 => Language.GetSafeLanguage789(prefer),
+        _ => Language.GetSafeLanguage789(prefer),
+    };
 
     /// <summary>
     /// Represents a single entry in the Living Dex.
