@@ -26,12 +26,42 @@ jobs:
           $dll = "Deps/PKHeX.Core.dll"
           $version = [System.Reflection.Assembly]::LoadFrom((Resolve-Path $dll)).GetName().Version
           $versionString = "$($version.Major).$($version.Minor).$($version.Build)"
+
+          # Fetch all tags
+          git fetch --tags
+
+          # Get all tags matching this version (v25.11.7, v25.11.7-Rev.1, etc.)
+          $allTags = git tag -l "v$versionString*"
+
+          # Find the highest revision number
+          $maxRev = 0
+          $hasBaseTag = $false
+          foreach ($tag in $allTags) {
+            if ($tag -eq "v$versionString") {
+              $hasBaseTag = $true
+            } elseif ($tag -match "v$versionString-Rev\.(\d+)") {
+              $rev = [int]$matches[1]
+              if ($rev -gt $maxRev) {
+                $maxRev = $rev
+              }
+            }
+          }
+
+          # Determine the tag to use
+          if (-not $hasBaseTag) {
+            $tagName = "v$versionString"
+          } else {
+            $nextRev = $maxRev + 1
+            $tagName = "v$versionString-Rev.$nextRev"
+          }
+
           echo "version=$versionString" >> $env:GITHUB_OUTPUT
+          echo "tag=$tagName" >> $env:GITHUB_OUTPUT
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: "v${{ steps.ver.outputs.version }}"
-          name: "Living Dex Builder ${{ steps.ver.outputs.version }}"
-          body: "Automated release for version ${{ steps.ver.outputs.version }}"
+          tag_name: "${{ steps.ver.outputs.tag }}"
+          name: "Living Dex Builder ${{ steps.ver.outputs.tag }}"
+          body: "Automated release for PKHeX Core version ${{ steps.ver.outputs.version }}"
           files: |
             PKHeX.Plugin.LivingDex/bin/Release/net9.0-windows/PKHeX.Plugin.LivingDex.dll
