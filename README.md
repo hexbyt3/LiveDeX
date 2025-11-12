@@ -10,6 +10,10 @@
 
 Generate missing Pokémon for your Living Dex. Supports all games from Gen 1-9 including Legends Z-A.
 
+All Mega forms even include their Mega Stone's as Held Items in PLZA!
+
+<img width="860" height="417" alt="image" src="https://github.com/user-attachments/assets/695bf283-cbfe-4447-b66f-244bc35dd40b" />
+
 ![Screenshot](https://github.com/user-attachments/assets/02f136a3-df9f-46de-a1a5-cc9fee13ef03)
 
 ## Installation
