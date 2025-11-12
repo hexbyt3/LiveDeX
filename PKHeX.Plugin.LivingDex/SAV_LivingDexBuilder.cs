@@ -102,9 +102,21 @@ public partial class SAV_LivingDexBuilder : Form
                 if (form > 0 && !SAV.Personal.IsPresentInGame(species, form))
                     continue;
 
-                // Skip forms for Scatterbug (664) and Spewpa (665) - only Vivillon (666) has meaningful forms
-                if (form > 0 && (species == 664 || species == 665))
+                // Skip battle-only forms (Megas, Ultra Burst, etc.)
+                if (FormInfo.IsBattleOnlyForm(species, form, (byte)SAV.Generation))
                     continue;
+
+                // When "All Forms" is checked, apply form filtering logic
+                if (CHK_Forms.Checked && form > 0)
+                {
+                    // Check if this form is changeable (e.g., Furfrou grooming forms)
+                    bool isFormChangeable = FormInfo.IsFormChangeable(species, 0, form, SAV.Context, SAV.Context);
+
+                    // If the form is changeable, include it (we'll use base encounter and set the form)
+                    // If not changeable, verify encounters actually exist
+                    if (!isFormChangeable && !HasValidEncounters(species, form))
+                        continue;
+                }
 
                 // Get the PersonalInfo for this specific form
                 var formPi = SAV.Personal[species, form];
@@ -282,17 +294,29 @@ public partial class SAV_LivingDexBuilder : Form
     }
 
     /// <summary>
-    /// Determines if a species is obtainable in the current game.
+    /// Checks if a Pokemon species has valid encounters in the current game.
     /// </summary>
     /// <param name="species">The species ID to check.</param>
-    /// <returns>True if obtainable, false otherwise.</returns>
+    /// <returns>True if the species has encounters in this game.</returns>
     private bool IsObtainableInGame(ushort species)
     {
-        // When "Include All Games" is checked, we want ALL species that exist in the game's data
-        // Otherwise, we should check if the Pokémon can actually be obtained in this specific version
-        // For now, return true since we're including all Pokémon that are in the game data
-        // This could be refined later to check version-exclusive encounter tables
-        return true;
+        try
+        {
+            var pk = SAV.BlankPKM;
+            pk.Species = species;
+            pk.Form = 0;
+            pk.CurrentLevel = 5;
+
+            var versions = new[] { SAV.Version };
+            var moves = ReadOnlyMemory<ushort>.Empty;
+            var encounters = EncounterMovesetGenerator.GenerateEncounters(pk, moves, versions);
+
+            return encounters.Any();
+        }
+        catch
+        {
+            return false;
+        }
     }
     
     /// <summary>
@@ -628,9 +652,16 @@ public partial class SAV_LivingDexBuilder : Form
             // Configure and execute encounter search
             ConfigureEncounterSearch();
             var encounters = SearchForEncounters(pk);
-            
+
+            // If no encounters found, try searching for pre-evolution with trades
             if (encounters.Count == 0)
-                return HandleNoEncounters(entry);
+            {
+                var preEvoEncounters = SearchForPreEvolutionTradeEncounters(pk, entry);
+                if (preEvoEncounters != null && preEvoEncounters.Count > 0)
+                    encounters = preEvoEncounters;
+                else
+                    return HandleNoEncounters(entry);
+            }
             
             // Select best encounter and convert to PKM
             var encounter = SelectBestEncounter(encounters);
@@ -719,9 +750,10 @@ public partial class SAV_LivingDexBuilder : Form
     {
         return SAV.Version switch
         {
-            // Gen 9 - Scarlet/Violet
+            // Gen 9 - Scarlet/Violet and Legends Z-A
             GameVersion.SL or GameVersion.VL => [GameVersion.SL, GameVersion.VL],
-            
+            GameVersion.ZA => [GameVersion.ZA], // Legends Z-A (standalone)
+
             // Gen 8 - Different game lines
             GameVersion.BD or GameVersion.SP => [GameVersion.BD, GameVersion.SP], // BDSP
             GameVersion.PLA => [GameVersion.PLA], // Legends Arceus (standalone)
@@ -785,13 +817,91 @@ public partial class SAV_LivingDexBuilder : Form
     }
 
     /// <summary>
+    /// Searches for trade encounters in pre-evolutions when direct encounters aren't found.
+    /// This handles cases like Slowbro-Galar where the evolved form has no direct encounters,
+    /// but the pre-evolution (Slowpoke-Galar) has an in-game trade encounter.
+    /// </summary>
+    private List<IEncounterInfo>? SearchForPreEvolutionTradeEncounters(PKM pk, LivingDexEntry entry)
+    {
+        try
+        {
+            // Get evolution tree and reverse lookup for pre-evolutions
+            var evos = EvolutionTree.GetEvolutionTree(SAV.Context);
+            var preEvolutions = evos.Reverse.GetPreEvolutions(entry.Species, entry.Form);
+
+            // Search through pre-evolutions for trade encounters
+            foreach (var (species, form) in preEvolutions)
+            {
+                // Create template for pre-evolution
+                var prePk = SAV.BlankPKM;
+                prePk.Species = species;
+                prePk.Form = form;
+                prePk.CurrentLevel = 5;
+
+                // Search for encounters
+                var compatibleVersions = GetCompatibleVersions();
+                var moves = ReadOnlyMemory<ushort>.Empty;
+                var preEncounters = EncounterMovesetGenerator.GenerateEncounters(prePk, moves, compatibleVersions)
+                    .OfType<IEncounterInfo>()
+                    .ToList();
+
+                // Check if any are trade encounters
+                var tradeEncounters = preEncounters.Where(e => e.GetType().Name.Contains("Trade")).ToList();
+                if (tradeEncounters.Count > 0)
+                    return tradeEncounters;
+            }
+
+            // If no pre-evolutions found for this exact form, search pre-evolution species with all forms
+            // This handles cases where form numbers don't match (e.g., Slowbro-Galar is Form 2, but we might be checking Form 1,
+            // or Slowbro Form 1 has no pre-evolutions because Form 1 is Mega)
+            if (preEvolutions.Count() == 0)
+            {
+                // Get all possible pre-evolution species by checking form 0
+                var baseFormPreEvos = evos.Reverse.GetPreEvolutions(entry.Species, 0);
+                foreach (var (species, _) in baseFormPreEvos)
+                {
+                    // Check all forms of this pre-evolution species for trade encounters
+                    var pt = SAV.Personal;
+                    var pi = pt.GetFormEntry(species, 0);
+                    var formCount = pi.FormCount;
+
+                    for (byte testForm = 0; testForm < formCount; testForm++)
+                    {
+                        var prePk = SAV.BlankPKM;
+                        prePk.Species = species;
+                        prePk.Form = testForm;
+                        prePk.CurrentLevel = 5;
+
+                        var compatibleVersions = GetCompatibleVersions();
+                        var moves = ReadOnlyMemory<ushort>.Empty;
+                        var preEncounters = EncounterMovesetGenerator.GenerateEncounters(prePk, moves, compatibleVersions)
+                            .OfType<IEncounterInfo>()
+                            .ToList();
+
+                        // Return trade encounters from the specific form that has them
+                        var tradeEncounters = preEncounters.Where(e => e.GetType().Name.Contains("Trade")).ToList();
+                        if (tradeEncounters.Count > 0)
+                            return tradeEncounters; // Returns encounters for the form that actually has trades (e.g., Slowpoke-Galar Form 1)
+                    }
+                }
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Handles the case when no encounters are found.
     /// </summary>
     private PKM? HandleNoEncounters(LivingDexEntry entry)
     {
         if (!CHK_LegalOnly.Checked)
             return CreateBasicPokemon(entry);
-        
+
         EncounterMovesetGenerator.ResetFilters();
         return null;
     }
@@ -827,7 +937,22 @@ public partial class SAV_LivingDexBuilder : Form
         // Use trainer data from database if available, otherwise use save file
         var trainer = Trainers.GetTrainer(encounter.Version, encounter.Generation <= 2 ? (LanguageID)SAV.Language : null) ?? SAV;
         var pk = enc.ConvertToPKM(trainer, criteria);
-        
+
+        // Set the form to match the requested entry (important for form-changeable Pokemon like Furfrou)
+        if (pk.Form != entry.Form)
+        {
+            pk.Form = entry.Form;
+
+            // Set FormArgument for Pokemon that require it (e.g., Furfrou groomed forms)
+            if (pk is IFormArgument fa && pk.Species == (ushort)Species.Furfrou && pk.Form != 0)
+            {
+                // Furfrou groomed forms need FormArgument set to 5 days
+                fa.FormArgumentRemain = 5;
+                fa.FormArgumentElapsed = 0;
+                fa.FormArgumentMaximum = 5;
+            }
+        }
+
         // Handle evolved forms if species doesn't match
         if (pk.Species != entry.Species)
         {
@@ -838,15 +963,18 @@ public partial class SAV_LivingDexBuilder : Form
             SetPokemonLevel(pk, encounter);
         }
         
+        // Add Mega Stone for Pokemon that have Mega evolutions
+        SetMegaStone(pk);
+
         // Final validation and cleanup
         pk.RefreshChecksum();
-        
+
         if (CHK_LegalOnly.Checked && !ValidateAndFixLegality(pk))
         {
             EncounterMovesetGenerator.ResetFilters();
             return null;
         }
-        
+
         return pk;
     }
 
@@ -855,6 +983,8 @@ public partial class SAV_LivingDexBuilder : Form
     /// </summary>
     private void TransformToEvolvedForm(PKM pk, LivingDexEntry entry)
     {
+        var originalLevel = pk.CurrentLevel;
+
         // Set appropriate level for evolution
         if (CHK_MinLevel.Checked)
         {
@@ -865,19 +995,149 @@ public partial class SAV_LivingDexBuilder : Form
         {
             pk.CurrentLevel = 100; // Experience.MaxLevel
         }
-        
+
         // Transform to target species
+        var wasNicknamed = pk.IsNicknamed; // Preserve trade nickname status
         pk.Species = entry.Species;
         pk.Form = entry.Form;
-        pk.IsNicknamed = false;
-        pk.Nickname = SpeciesName.GetSpeciesNameGeneration(entry.Species, pk.Language, SAV.Generation);
-        
+
+        // Only update nickname if it wasn't from an in-game trade
+        // In-game trades have IsNicknamed=true and should keep their original nickname
+        if (!wasNicknamed)
+        {
+            pk.IsNicknamed = false;
+            pk.Nickname = SpeciesName.GetSpeciesNameGeneration(entry.Species, pk.Language, SAV.Generation);
+        }
+
         // Update stats and data for new species
         var pi = SAV.Personal[entry.Species, entry.Form];
         pk.EXP = Experience.GetEXP(pk.CurrentLevel, pi.EXPGrowth);
         pk.RefreshAbility(0);
+
+        // Update moves for the new species and level
+        EncounterUtil.SetEncounterMoves(pk, SAV.Version, pk.CurrentLevel);
+        pk.HealPP();
+
+        // Update Plus Move flags for ZA Pokemon
+        if (pk is PA9 pa9 && pi is PersonalInfo9ZA pi9a)
+        {
+            SetPlusFlags(pa9, pi9a, pk.CurrentLevel);
+        }
+
         pk.ResetPartyStats();
         pk.Heal();
+    }
+
+    /// <summary>
+    /// Checks if valid encounters exist for a specific species and form.
+    /// </summary>
+    private bool HasValidEncounters(ushort species, byte form)
+    {
+        try
+        {
+            var pk = SAV.BlankPKM;
+            pk.Species = species;
+            pk.Form = form;
+            pk.CurrentLevel = 5;
+
+            var compatibleVersions = GetCompatibleVersions();
+            var moves = ReadOnlyMemory<ushort>.Empty;
+            var encounters = EncounterMovesetGenerator.GenerateEncounters(pk, moves, compatibleVersions);
+
+            return encounters.Any();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Sets the appropriate Mega Stone for Pokemon that can Mega Evolve.
+    /// Only applies to PA9 (Legends Z-A) Pokemon.
+    /// </summary>
+    private void SetMegaStone(PKM pk)
+    {
+        // Only set Mega Stones for PA9 (Legends Z-A)
+        if (pk is not PA9)
+            return;
+
+        // Only set Mega Stones if the Pokemon has a Mega form
+        if (!FormInfo.HasMegaForm(pk.Species))
+            return;
+
+        // Get the Mega Stone item ID for this species
+        var megaStone = GetMegaStoneItem(pk.Species, pk.Form);
+        if (megaStone == 0)
+            return;
+
+        // Set the held item
+        pk.HeldItem = megaStone;
+    }
+
+    /// <summary>
+    /// Gets the Mega Stone item ID for a species and form.
+    /// </summary>
+    private int GetMegaStoneItem(ushort species, byte form)
+    {
+        // Map species to their Mega Stones for Legends Z-A
+        // Item IDs are from PKHeX.Core ItemStorage9ZA.MegaStones
+        return ((Species)species, form) switch
+        {
+            // Gen 1 Starters
+            (Species.Venusaur, 0) => 659, // Venusaurite
+            (Species.Charizard, 0) => 660, // Charizardite X
+            (Species.Blastoise, 0) => 661, // Blastoisinite
+
+            // Other Gen 1
+            (Species.Alakazam, 0) => 679, // Alakazite
+            (Species.Gengar, 0) => 656, // Gengarite
+            (Species.Kangaskhan, 0) => 675, // Kangaskhanite
+            (Species.Pinsir, 0) => 671, // Pinsirite
+            (Species.Gyarados, 0) => 676, // Gyaradosite
+            (Species.Aerodactyl, 0) => 672, // Aerodactylite
+            (Species.Mewtwo, 0) => 662, // Mewtwonite X
+
+            // Gen 2
+            (Species.Ampharos, 0) => 658, // Ampharosite
+            (Species.Scizor, 0) => 670, // Scizorite
+            (Species.Heracross, 0) => 680, // Heracronite
+            (Species.Houndoom, 0) => 666, // Houndoominite
+            (Species.Tyranitar, 0) => 669, // Tyranitarite
+
+            // Gen 3 + Gen 4
+            (Species.Blaziken, 0) => 664, // Blazikenite
+            (Species.Gardevoir, 0) => 657, // Gardevoirite
+            (Species.Mawile, 0) => 681, // Mawilite
+            (Species.Aggron, 0) => 667, // Aggronite
+            (Species.Medicham, 0) => 665, // Medichamite
+            (Species.Manectric, 0) => 682, // Manectite
+            (Species.Banette, 0) => 668, // Banettite
+            (Species.Absol, 0) => 677, // Absolite
+            (Species.Latias, 0) => 684, // Latiasite
+            (Species.Latios, 0) => 685, // Latiosite
+            (Species.Garchomp, 0) => 683, // Garchompite
+            (Species.Lucario, 0) => 673, // Lucarionite
+            (Species.Abomasnow, 0) => 674, // Abomasite
+
+            // Gen 5
+            (Species.Audino, 0) => 764, // Audinite (not Diancie)
+
+            // Gen 6
+            (Species.Floette, 5) => 2579, // Floettite (Eternal Flower form)
+            (Species.Diancie, 0) => 764, // Diancite
+
+            _ => 0
+        };
+    }
+
+    /// <summary>
+    /// Sets Plus Move flags for Legends Z-A Pokemon based on their level and learnset.
+    /// </summary>
+    private static void SetPlusFlags(PA9 pa9, PersonalInfo9ZA pi, byte level)
+    {
+        var (_, plus) = LearnSource9ZA.GetLearnsetAndPlus(pa9.Species, pa9.Form);
+        PlusRecordApplicator.SetPlusFlagsEncounter(pa9, pi, plus, level, ReadOnlySpan<ushort>.Empty);
     }
 
     /// <summary>
@@ -893,9 +1153,23 @@ public partial class SAV_LivingDexBuilder : Form
         {
             pk.CurrentLevel = 100; // Experience.MaxLevel
         }
-        
+
         var pi = SAV.Personal[pk.Species, pk.Form];
         pk.EXP = Experience.GetEXP(pk.CurrentLevel, pi.EXPGrowth);
+
+        // Update moves to be appropriate for the new level
+        if (!CHK_MinLevel.Checked && pk.CurrentLevel != encounter.LevelMin)
+        {
+            // When leveling to 100, update moves to match the new level
+            EncounterUtil.SetEncounterMoves(pk, SAV.Version, pk.CurrentLevel);
+            pk.HealPP();
+
+            // Update Plus Move flags for ZA Pokemon
+            if (pk is PA9 pa9 && pi is PersonalInfo9ZA pi9a)
+            {
+                SetPlusFlags(pa9, pi9a, pk.CurrentLevel);
+            }
+        }
     }
 
     /// <summary>
@@ -906,11 +1180,12 @@ public partial class SAV_LivingDexBuilder : Form
         var la = new LegalityAnalysis(pk);
         if (la.Valid)
             return true;
-            
+
         // Try basic fixes
         pk.HealPP();
         pk.Heal();
-        
+        pk.RefreshChecksum();
+
         // Re-check after fixes
         la = new LegalityAnalysis(pk);
         return la.Valid;
