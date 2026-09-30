@@ -55,7 +55,7 @@ public class LivingDexPlugin : IPlugin
         {
             var item = dataMenu.DropDownItems[i];
             if (item != null && (item.Name == "Menu_BatchEditor" ||
-                item.Text.Contains("Batch Editor")))
+                item.Text?.Contains("Batch Editor") == true))
             {
                 batchEditorIndex = i;
                 break;
