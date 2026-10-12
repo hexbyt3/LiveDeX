@@ -350,7 +350,7 @@ public partial class SAV_LivingDexBuilder : Form
     private void SetBasicProperties(PKM pk, LivingDexEntry entry)
     {
         var pi = SAV.Personal[entry.Species, entry.Form];
-        pk.Nature = pk.StatNature = Nature.Docile;
+        pk.Nature = pk.StatAlignment = Nature.Docile;
         pk.RefreshAbility(0);
         pk.Ball = (byte)Ball.Poke;
         pk.CurrentFriendship = pi.BaseFriendship;
