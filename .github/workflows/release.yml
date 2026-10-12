@@ -1,6 +1,7 @@
 name: Build and Release
 on:
   push:
+    branches: [ master ]   # a release only ever comes from the default branch
     paths:
       - "Deps/PKHeX.Core.dll"
   workflow_dispatch:
